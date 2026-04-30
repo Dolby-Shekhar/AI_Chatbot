@@ -64,3 +64,38 @@ ai-chatbot-node/
 - Configuration constants
 - Connection retry logic
 - Offline detection
+
+---
+
+## Deploy on Render
+
+### Option 1: One-Click Deploy (Recommended)
+
+1. Click this button to deploy:
+
+[![Deploy to Render](https://render.com/images/deploy-to-render.svg)](https://render.com/deploy?repo=https://github.com/YOUR_GITHUB_USERNAME/ai-chatbot-node)
+
+2. Create a GitHub repo and push your code first
+3. In Render dashboard, connect your GitHub repository
+4. Add environment variable: `GROQ_API_KEY` (optional)
+5. Click "Deploy"
+
+### Option 2: Manual Deploy
+
+1. Push your code to GitHub
+2. Go to https://dashboard.render.com
+3. Click "New +" → "Web Service"
+4. Connect your GitHub repository
+5. Configure:
+   - Build Command: `npm install`
+   - Start Command: `bash start.sh`
+   - Environment: Node
+   - Node Version: 20
+6. Add environment variables:
+   - `GROQ_API_KEY` (optional)
+   - `PORT` = `10000`
+7. Click "Deploy"
+
+### Note
+- The app will be available at `https://your-app-name.onrender.com`
+- Database persists on Render's disk (free tier has limits)
