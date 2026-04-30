@@ -51,7 +51,8 @@ function formatTime(timestamp) {
 // Initialize WebSocket
 function initWebSocket() {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  ws = new WebSocket(protocol + '//' + location.host);
+  // Send userId as query param since WebSocket doesn't support custom headers
+  ws = new WebSocket(protocol + '//' + location.host + '?x-user-id=' + encodeURIComponent(userId));
   
   ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
@@ -254,7 +255,7 @@ async function switchSession(sid) {
 // Load chats for session with timestamps
 async function loadChats(sid) {
   try {
-    const res = await fetch('/api/chats?session=' + sid);
+    const res = await fetch('/api/chats?session=' + sid, { headers: getHeaders() });
     const data = await res.json();
     chatDiv.innerHTML = '';
     for (const chat of data.chats || []) {
@@ -270,7 +271,7 @@ async function loadChats(sid) {
 async function showHistory() {
   setLoading(true);
   try {
-    const res = await fetch('/api/chats');
+    const res = await fetch('/api/chats', { headers: getHeaders() });
     const data = await res.json();
     const count = data.chats?.length || 0;
     const summary = data.summary || 'None';
@@ -286,7 +287,7 @@ async function showHistory() {
 async function exportChats() {
   setLoading(true);
   try {
-    const res = await fetch('/api/chats/export');
+    const res = await fetch('/api/chats/export', { headers: getHeaders() });
     const data = await res.json();
     const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
     const url = URL.createObjectURL(blob);
@@ -339,7 +340,7 @@ async function clearChat() {
   }
   
   try {
-    await fetch('/api/chats/clear?session=' + currentSession, { method: 'POST' });
+    await fetch('/api/chats/clear?session=' + currentSession, { method: 'POST', headers: getHeaders() });
     chatDiv.innerHTML = '';
     addMessage('Chat cleared.', 'ai');
   } catch (e) {

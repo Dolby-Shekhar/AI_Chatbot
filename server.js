@@ -214,7 +214,13 @@ app.get('/api/search', async (req, res) => {
 
 // WebSocket handling with streaming and user-scoped session support
 wss.on('connection', (ws, req) => {
+  // Get userId from header or query param
   let userId = req.headers['x-user-id'];
+  if (!userId) {
+    // Extract from query string
+    const urlObj = new URL(req.url, 'http://localhost');
+    userId = urlObj.searchParams.get('x-user-id');
+  }
   if (!userId) {
     userId = 'user_' + uuidv4().substring(0, 8);
   }
