@@ -1,0 +1,30 @@
+{
+  "name": "ai-chatbot-node",
+  "version": "1.0.0",
+  "description": "Self-learning AI Chatbot with internet access",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "dev": "nodemon server.js"
+  },
+  "dependencies": {
+    "axios": "^1.7.2",
+    "compression": "^1.8.1",
+    "cors": "^2.8.6",
+    "dompurify": "^3.0.8",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "express-rate-limit": "^7.1.5",
+    "helmet": "^7.1.0",
+    "lowdb": "^7.0.1",
+    "multer": "^1.4.5-lts.1",
+    "uuid": "^14.0.0",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "nodemon": "^3.1.4"
+  },
+  "engines": {
+    "node": ">=20.0.0"
+  }
+}

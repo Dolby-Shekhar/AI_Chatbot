@@ -1,0 +1,504 @@
+<!DOCTYPE html>
+<html>
+<head>
+<title>AI Chatbot Pro</title>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+  <style>
+    /* CSS Variables for theming */
+    :root {
+      --bg-primary: #0f0f23;
+      --bg-secondary: #1a1a2e;
+      --bg-tertiary: #252542;
+      --bg-hover: #2d2d4a;
+      --accent-primary: #6366f1;
+      --accent-secondary: #8b5cf6;
+      --accent-glow: rgba(99, 102, 241, 0.4);
+      --text-primary: #f1f5f9;
+      --text-secondary: #94a3b8;
+      --text-muted: #64748b;
+      --success: #10b981;
+      --error: #ef4444;
+      --warning: #f59e0b;
+      --border: rgba(255, 255, 255, 0.08);
+      --shadow: 0 4px 24px rgba(0, 0, 0, 0.3);
+      --radius-sm: 8px;
+      --radius-md: 12px;
+      --radius-lg: 16px;
+    }
+
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+
+    body {
+      font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+      background: linear-gradient(135deg, #0f0f23 0%, #1a1a2e 50%, #0f0f23 100%);
+      background-attachment: fixed;
+      color: var(--text-primary);
+      min-height: 100vh;
+      overflow-x: hidden;
+    }
+
+    /* Animated background pattern */
+    body::before {
+      content: '';
+      position: fixed;
+      top: 0;
+      left: 0;
+      width: 100%;
+      height: 100%;
+      background: 
+        radial-gradient(circle at 20% 80%, rgba(99, 102, 241, 0.1) 0%, transparent 50%),
+        radial-gradient(circle at 80% 20%, rgba(139, 92, 246, 0.1) 0%, transparent 50%),
+        radial-gradient(circle at 40% 40%, rgba(99, 102, 241, 0.05) 0%, transparent 30%);
+      pointer-events: none;
+      z-index: -1;
+    }
+
+    .container {
+      max-width: 900px;
+      margin: 0 auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      height: 100vh;
+      gap: 12px;
+    }
+
+    /* Header */
+    header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 20px;
+      background: rgba(26, 26, 46, 0.8);
+      backdrop-filter: blur(12px);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+    }
+
+    h1 {
+      font-size: 1.4rem;
+      font-weight: 600;
+      background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+    }
+
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+
+    .header-buttons {
+      display: flex;
+      gap: 8px;
+    }
+
+    /* Connection Status */
+    .status {
+      font-size: 0.75rem;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      padding: 6px 12px;
+      border-radius: 20px;
+      background: rgba(0, 0, 0, 0.3);
+    }
+
+    .status.connected { color: var(--success); }
+    .status.disconnected { color: var(--error); }
+    .status.connecting { color: var(--warning); }
+
+    .status-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+      animation: pulse-dot 2s infinite;
+    }
+
+    @keyframes pulse-dot {
+      0%, 100% { opacity: 1; transform: scale(1); }
+      50% { opacity: 0.5; transform: scale(0.8); }
+    }
+
+    /* Buttons */
+    button {
+      padding: 10px 16px;
+      border: none;
+      border-radius: var(--radius-md);
+      cursor: pointer;
+      font-size: 0.875rem;
+      font-weight: 500;
+      transition: all 0.2s ease;
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+    }
+
+    button:hover {
+      background: var(--bg-hover);
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(0, 0, 0, 0.2);
+    }
+
+    .btn-primary {
+      background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+      color: white;
+      box-shadow: 0 4px 16px var(--accent-glow);
+    }
+
+    .btn-primary:hover {
+      background: linear-gradient(135deg, var(--accent-secondary), var(--accent-primary));
+      box-shadow: 0 6px 24px var(--accent-glow);
+    }
+
+    .btn-secondary {
+      background: rgba(255, 255, 255, 0.05);
+      border: 1px solid var(--border);
+    }
+
+    .btn-secondary:hover {
+      background: rgba(255, 255, 255, 0.1);
+      border-color: rgba(255, 255, 255, 0.15);
+    }
+
+    .btn-icon {
+      padding: 10px;
+      font-size: 1.1rem;
+      width: 40px;
+      height: 40px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    /* Sessions */
+    .sessions-bar {
+      display: flex;
+      gap: 8px;
+      padding: 12px 16px;
+      overflow-x: auto;
+      background: rgba(26, 26, 46, 0.6);
+      backdrop-filter: blur(8px);
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border);
+    }
+
+    .session-tag {
+      padding: 8px 16px;
+      background: var(--bg-tertiary);
+      border-radius: 20px;
+      font-size: 0.8rem;
+      white-space: nowrap;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      border: 1px solid transparent;
+    }
+
+    .session-tag:hover {
+      background: var(--bg-hover);
+      border-color: var(--accent-primary);
+    }
+
+    .session-tag.active {
+      background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+      color: white;
+      box-shadow: 0 2px 12px var(--accent-glow);
+    }
+
+    /* Tools */
+    .tools {
+      display: flex;
+      gap: 6px;
+      padding: 12px 16px;
+      background: rgba(26, 26, 46, 0.6);
+      backdrop-filter: blur(8px);
+      border-radius: var(--radius-md);
+      border: 1px solid var(--border);
+    }
+
+    .tools button {
+      background: transparent;
+      border: 1px solid var(--border);
+    }
+
+    .tools button:hover {
+      background: var(--bg-tertiary);
+      border-color: var(--accent-primary);
+    }
+
+    #file-input { display: none; }
+
+    /* Chat Area */
+    #chat {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+      background: rgba(26, 26, 46, 0.4);
+      backdrop-filter: blur(8px);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border);
+    }
+
+    .message {
+      max-width: 75%;
+      padding: 14px 18px;
+      border-radius: var(--radius-lg);
+      line-height: 1.6;
+      font-size: 0.95rem;
+      animation: message-in 0.3s ease;
+      position: relative;
+    }
+
+    @keyframes message-in {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+
+    .message.user {
+      align-self: flex-end;
+      background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+      color: white;
+      border-bottom-right-radius: 4px;
+      box-shadow: 0 4px 16px var(--accent-glow);
+    }
+
+    .message.ai {
+      align-self: flex-start;
+      background: var(--bg-tertiary);
+      border: 1px solid var(--border);
+      border-bottom-left-radius: 4px;
+    }
+
+    .message.error {
+      background: linear-gradient(135deg, #dc2626, #b91c1c);
+      color: white;
+    }
+
+    .message code {
+      background: rgba(0, 0, 0, 0.4);
+      padding: 2px 6px;
+      border-radius: 4px;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 0.85em;
+    }
+
+    .message pre {
+      background: rgba(0, 0, 0, 0.5);
+      padding: 14px;
+      border-radius: var(--radius-sm);
+      overflow-x: auto;
+      margin: 10px 0;
+      border: 1px solid var(--border);
+    }
+
+    .message pre code {
+      background: transparent;
+      padding: 0;
+      font-family: 'JetBrains Mono', 'Fira Code', monospace;
+      font-size: 0.85rem;
+      line-height: 1.5;
+    }
+
+    /* Timestamps */
+    .timestamp {
+      font-size: 0.7rem;
+      opacity: 0.6;
+      margin-right: 8px;
+    }
+
+    /* Copy button */
+    .copy-btn {
+      background: transparent;
+      border: none;
+      padding: 4px 8px;
+      cursor: pointer;
+      opacity: 0.4;
+      font-size: 0.8rem;
+      transition: all 0.2s;
+    }
+
+    .copy-btn:hover { opacity: 1; }
+
+    /* Typing Indicator */
+    .typing {
+      display: flex;
+      gap: 5px;
+      padding: 14px 18px;
+      background: var(--bg-tertiary);
+      border-radius: var(--radius-lg);
+      align-self: flex-start;
+      border: 1px solid var(--border);
+    }
+
+    .typing span {
+      width: 10px;
+      height: 10px;
+      background: var(--accent-primary);
+      border-radius: 50%;
+      animation: bounce 1.4s infinite ease-in-out;
+    }
+
+    .typing span:nth-child(1) { animation-delay: -0.32s; }
+    .typing span:nth-child(2) { animation-delay: -0.16s; }
+    .typing span:nth-child(3) { animation-delay: 0s; }
+
+    @keyframes bounce {
+      0%, 80%, 100% { transform: scale(0); }
+      40% { transform: scale(1); }
+    }
+
+    /* Input Area */
+    .input-area {
+      display: flex;
+      gap: 12px;
+      padding: 16px 20px;
+      background: rgba(26, 26, 46, 0.8);
+      backdrop-filter: blur(12px);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+    }
+
+    .input-area input {
+      flex: 1;
+      padding: 14px 18px;
+      border: none;
+      border-radius: var(--radius-md);
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+      font-size: 1rem;
+      border: 1px solid transparent;
+      transition: all 0.2s ease;
+    }
+
+    .input-area input:focus {
+      outline: none;
+      border-color: var(--accent-primary);
+      box-shadow: 0 0 0 3px var(--accent-glow);
+    }
+
+    .input-area input::placeholder {
+      color: var(--text-muted);
+    }
+
+    .input-area button {
+      padding: 14px 28px;
+      font-size: 1rem;
+    }
+
+    /* Voice Status */
+    .voice-status {
+      position: fixed;
+      bottom: 100px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: linear-gradient(135deg, var(--accent-primary), var(--accent-secondary));
+      color: white;
+      padding: 12px 24px;
+      border-radius: 30px;
+      font-size: 0.9rem;
+      z-index: 1000;
+      box-shadow: 0 8px 32px var(--accent-glow);
+      animation: pulse 1.5s infinite;
+    }
+
+    @keyframes pulse {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.7; }
+    }
+
+    /* Emoji Picker */
+    .emoji-picker {
+      position: fixed;
+      bottom: 100px;
+      right: 20px;
+      background: var(--bg-secondary);
+      border-radius: var(--radius-md);
+      padding: 12px;
+      display: grid;
+      grid-template-columns: repeat(8, 1fr);
+      gap: 4px;
+      max-width: 280px;
+      z-index: 1000;
+      box-shadow: var(--shadow);
+      border: 1px solid var(--border);
+    }
+
+    .emoji-picker span {
+      cursor: pointer;
+      font-size: 1.3rem;
+      padding: 6px;
+      border-radius: 6px;
+      transition: all 0.15s;
+    }
+
+    .emoji-picker span:hover {
+      background: var(--bg-hover);
+      transform: scale(1.2);
+    }
+
+    /* Scrollbar */
+    ::-webkit-scrollbar { width: 6px; }
+    ::-webkit-scrollbar-track { background: transparent; }
+    ::-webkit-scrollbar-thumb { background: var(--bg-hover); border-radius: 3px; }
+    ::-webkit-scrollbar-thumb:hover { background: var(--accent-primary); }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <div class="header-left">
+        <h1>✨ AI Chatbot Pro</h1>
+        <span id="connection-status" class="status connected">
+          <span class="status-dot"></span>
+          <span class="status-text">Online</span>
+        </span>
+      </div>
+      <div class="header-buttons">
+        <button class="btn-secondary" onclick="toggleDark()" title="Toggle Theme">🎨</button>
+        <button class="btn-secondary" onclick="showHistory()" title="History">📜</button>
+        <button class="btn-secondary" onclick="exportChats()" title="Export">📥</button>
+      </div>
+    </header>
+
+    <div class="sessions-bar" id="sessions"></div>
+
+    <div class="tools">
+      <button class="btn-secondary btn-icon" onclick="newSession()" title="New Chat (Ctrl+N)">➕</button>
+      <button class="btn-secondary btn-icon" onclick="document.getElementById('file-input').click()" title="Upload File">📎</button>
+      <button class="btn-secondary btn-icon" id="searchBtn" onclick="toggleSearch()" title="Web Search (Ctrl+K)">🔍</button>
+      <button class="btn-secondary btn-icon" onclick="toggleVoice()" title="Voice Input (Ctrl+M)">🎤</button>
+      <button class="btn-secondary btn-icon" onclick="toggleEmojiPicker()" title="Emoji Picker">😀</button>
+      <button class="btn-secondary btn-icon" onclick="clearChat()" title="Clear Chat (Ctrl+Shift+C)">🗑️</button>
+      <input type="file" id="file-input" accept=".txt,.md,.json" onchange="uploadFile(event)">
+    </div>
+
+    <!-- Emoji Picker (hidden by default) -->
+    <div id="emoji-picker" class="emoji-picker" style="display: none;"></div>
+
+    <!-- Voice Status -->
+    <div id="voice-status" class="voice-status" style="display: none;">🎤 Listening...</div>
+
+    <div id="chat"></div>
+
+    <div class="typing" id="typing" style="display: none;">
+      <span></span><span></span><span></span>
+    </div>
+
+    <div class="input-area">
+      <input id="input" placeholder="Type your message..." onkeypress="if(event.key==='Enter') send()">
+      <button class="btn-primary" onclick="send()">Send</button>
+    </div>
+  </div>
+
+  <script src="/chat.js"></script>
+</body>
+</html>
