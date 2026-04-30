@@ -469,10 +469,12 @@
       </div>
     </header>
 
-    <div class="sessions-bar" id="sessions"></div>
+<!-- Sessions bar hidden for privacy - each user has private session only -->
+    <div class="sessions-bar" id="sessions" style="display:none;"></div>
 
     <div class="tools">
-      <button class="btn-secondary btn-icon" onclick="newSession()" title="New Chat (Ctrl+N)">➕</button>
+      <!-- New session button hidden for privacy -->
+      <button class="btn-secondary btn-icon" onclick="newSession()" title="New Chat (Ctrl+N)" style="display:none;">➕</button>
       <button class="btn-secondary btn-icon" onclick="document.getElementById('file-input').click()" title="Upload File">📎</button>
       <button class="btn-secondary btn-icon" id="searchBtn" onclick="toggleSearch()" title="Web Search (Ctrl+K)">🔍</button>
       <button class="btn-secondary btn-icon" onclick="toggleVoice()" title="Voice Input (Ctrl+M)">🎤</button>

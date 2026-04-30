@@ -30,8 +30,25 @@ const upload = multer({
   limits: { fileSize: 10 * 1024 * 1024 }
 });
 
+// Database structure - user-isolated: { users: { userId: { sessions: {}, activeSession: 'default', summary: null } } }
 const adapter = new JSONFile('db.json');
-const db = new Low(adapter, { sessions: {}, activeSession: 'default', summary: null });
+const db = new Low(adapter, { users: {}, summary: null });
+
+// User ID middleware - extracts or generates userId for privacy
+function getUserId(req, res, next) {
+  const userId = req.headers['x-user-id'] || req.query['x-user-id'];
+  if (!userId) {
+    // Generate anonymized user ID if not provided
+    req.userId = 'user_' + crypto.randomBytes(8).toString('hex');
+  } else {
+    // Sanitize and validate userId
+    req.userId = 'user_' + crypto.createHash('sha256').update(userId).digest('hex').slice(0, 16);
+  }
+  next();
+}
+
+// Apply userId middleware to all routes
+app.use(getUserId);
 
 // Initialize chatbot with DB
 chatbot.init(db);
@@ -55,6 +72,7 @@ app.use((req, res, next) => {
 // Serve static files
 app.use(express.static('public'));
 app.use(express.json({ limit: '100kb' }));
+app.use('/favicon.ico', express.static(path.join('public', 'favicon.svg')));
 
 // Security middleware
 app.use(helmet({
@@ -83,28 +101,35 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: Date.now() });
 });
 
-// REST API endpoints
+// REST API endpoints - user private
 app.get('/api/sessions', (req, res) => {
-  const sessions = Object.keys(db.data.sessions || {}).sort().reverse();
-  res.json({ sessions, active: db.data.activeSession });
+  const userData = db.data.users[req.userId] || { sessions: {}, activeSession: 'default' };
+  const sessions = Object.keys(userData.sessions || {}).sort().reverse();
+  res.json({ sessions, active: userData.activeSession, userId: req.userId });
 });
 
-// Specific routes must come before parameterized routes
+// Create new session - private to user
 app.post('/api/sessions/new', async (req, res) => {
+  // Initialize user data if not exists
+  db.data.users[req.userId] = db.data.users[req.userId] || { sessions: {}, activeSession: 'default' };
+  
   const sessionId = 'chat_' + Date.now();
-  db.data.sessions[sessionId] = [];
-  db.data.activeSession = sessionId;
+  db.data.users[req.userId].sessions[sessionId] = [];
+  db.data.users[req.userId].activeSession = sessionId;
   await db.write();
   res.json({ sessionId });
 });
 
+// Activate session - private to user
 app.post('/api/sessions/:sessionId/activate', async (req, res) => {
   const { sessionId } = req.params;
   if (sessionId === 'new') {
     return res.status(400).json({ error: 'Invalid session ID' });
   }
-  if (db.data.sessions[sessionId]) {
-    db.data.activeSession = sessionId;
+  
+  const userData = db.data.users[req.userId];
+  if (userData?.sessions?.[sessionId]) {
+    userData.activeSession = sessionId;
     await db.write();
     res.json({ success: true });
   } else {
@@ -112,26 +137,35 @@ app.post('/api/sessions/:sessionId/activate', async (req, res) => {
   }
 });
 
+// Get chats - private to user
 app.get('/api/chats', (req, res) => {
-  const sessionId = req.query.session || db.data.activeSession;
-  const chats = db.data.sessions[sessionId] || [];
-  res.json({ chats, summary: db.data.summary });
+  const userData = db.data.users[req.userId] || { sessions: {}, activeSession: 'default' };
+  const sessionId = req.query.session || userData.activeSession;
+  const chats = userData.sessions[sessionId] || [];
+  res.json({ chats, summary: userData.summary });
 });
 
+// Clear chats - private to user
 app.post('/api/chats/clear', async (req, res) => {
-  const sessionId = req.query.session || db.data.activeSession;
-  if (db.data.sessions[sessionId]) {
-    db.data.sessions[sessionId] = [];
+  const userData = db.data.users[req.userId];
+  if (userData) {
+    const sessionId = req.query.session || userData.activeSession;
+    if (userData.sessions[sessionId]) {
+      userData.sessions[sessionId] = [];
+    }
+    await db.write();
   }
-  await db.write();
   res.json({ success: true });
 });
 
+// Export chats - private to user (only their own data)
 app.get('/api/chats/export', async (req, res) => {
+  const userData = db.data.users[req.userId] || { sessions: {}, activeSession: 'default' };
   const data = {
-    sessions: db.data.sessions,
-    activeSession: db.data.activeSession,
-    summary: db.data.summary
+    sessions: userData.sessions,
+    activeSession: userData.activeSession,
+    summary: userData.summary,
+    userId: req.userId
   };
   res.json(data);
 });
@@ -193,8 +227,12 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
-// WebSocket handling with streaming and session support
-wss.on('connection', (ws) => {
+// WebSocket handling with user-isolated session support
+wss.on('connection', (ws, req) => {
+  // Get userId from WebSocket connection request (from URL query param)
+  const userId = req.url ? new URL(req.url, 'http://localhost').searchParams.get('x-user-id') : null;
+  let userIdHash = 'user_' + (userId ? crypto.createHash('sha256').update(userId).digest('hex').slice(0, 16) : crypto.randomBytes(8).toString('hex'));
+  
   ws.on('message', async (data) => {
     try {
       const payload = JSON.parse(data);
@@ -202,12 +240,15 @@ wss.on('connection', (ws) => {
       
       if (!msg) throw new Error('No message provided');
       
+      // Initialize user data if not exists
+      db.data.users[userIdHash] = db.data.users[userIdHash] || { sessions: { default: [] }, activeSession: 'default' };
+      
       // Switch to requested session or use active
-      const targetSession = sessionId || db.data.activeSession;
-      if (!db.data.sessions[targetSession]) {
-        db.data.sessions[targetSession] = [];
+      const targetSession = sessionId || db.data.users[userIdHash].activeSession;
+      if (!db.data.users[userIdHash].sessions[targetSession]) {
+        db.data.users[userIdHash].sessions[targetSession] = [];
       }
-      db.data.activeSession = targetSession;
+      db.data.users[userIdHash].activeSession = targetSession;
       
       // Stream response to client
       let fullResponse = '';
@@ -215,7 +256,7 @@ wss.on('connection', (ws) => {
       await chatbot.generate(msg, (chunk) => {
         fullResponse += chunk;
         ws.send(JSON.stringify({ type: 'chunk', content: chunk }));
-      }, targetSession);
+      }, userIdHash, targetSession);
       
       ws.send(JSON.stringify({ type: 'done', content: fullResponse }));
       
@@ -250,9 +291,8 @@ const startServer = async () => {
     console.error('Failed to read database:', e.message);
   }
   
-  // Initialize default session
-  db.data.sessions = db.data.sessions || { default: [] };
-  db.data.activeSession = db.data.activeSession || 'default';
+  // Initialize user-isolated data structure
+  db.data.users = db.data.users || {};
   
   try {
     await db.write();
@@ -261,7 +301,7 @@ const startServer = async () => {
   }
   
   server.listen(PORT, () => {
-    console.log('Chatbot running at http://localhost:' + PORT);
+    console.log('🔒 Private Chatbot running at http://localhost:' + PORT);
   });
 };
 

@@ -59,7 +59,7 @@ function init(database) {
   db = database;
 }
 
-async function generate(msg, onChunk, sessionId = 'default') {
+async function generate(msg, onChunk, userId = null, sessionId = 'default') {
   // Sanitize and validate input
   const sanitized = sanitizeInput(msg);
   if (!isValidMessage(sanitized)) {
@@ -75,14 +75,14 @@ async function generate(msg, onChunk, sessionId = 'default') {
   }
 
   const chatId = crypto.randomBytes(8).toString('hex').slice(0, 8);
-  const context = buildContext(sessionId);
+  const context = buildContext(userId, sessionId);
   
   if (onChunk) {
-    return await streamResponse(context, msg, onChunk, chatId, sessionId);
+    return await streamResponse(context, msg, onChunk, chatId, userId, sessionId);
   }
   
   const response = await getAIResponse(context, msg);
-  await saveChat(msg, response, chatId, sessionId);
+  await saveChat(msg, response, chatId, userId, sessionId);
   return response;
 }
 
@@ -90,23 +90,23 @@ function isSafe(msg) {
   return !containsForbiddenPatterns(msg);
 }
 
-function buildContext(sessionId) {
-  if (!db?.data?.sessions?.[sessionId]) return '';
+function buildContext(userId, sessionId) {
+  if (!userId || !db?.data?.users?.[userId]?.sessions?.[sessionId]) return '';
   
-  const chats = db.data.sessions[sessionId] || [];
+  const chats = db.data.users[userId].sessions[sessionId] || [];
   const recent = chats.slice(-15);
   if (recent.length === 0) return '';
   
   return recent.map(c => `User: ${c.user}\nAI: ${c.ai}`).join('\n');
 }
 
-async function streamResponse(context, currentMsg, onChunk, chatId, sessionId) {
+async function streamResponse(context, currentMsg, onChunk, chatId, userId, sessionId) {
   const apiKey = process.env.GROQ_API_KEY;
   
   if (!apiKey) {
     const fallback = await getFallbackResponse();
     onChunk(fallback);
-    await saveChat(currentMsg, fallback, chatId, sessionId);
+    await saveChat(currentMsg, fallback, chatId, userId, sessionId);
     return fallback;
   }
   
@@ -164,14 +164,14 @@ async function streamResponse(context, currentMsg, onChunk, chatId, sessionId) {
     fullResponse = fullResponse.trim();
     if (!fullResponse) fullResponse = await getFallbackResponse();
     
-    await saveChat(currentMsg, fullResponse, chatId, sessionId);
+    await saveChat(currentMsg, fullResponse, chatId, userId, sessionId);
     return fullResponse;
     
   } catch (e) {
     console.log('Stream error:', e.message);
     const fallback = await getFallbackResponse();
     onChunk(fallback);
-    await saveChat(currentMsg, fallback, chatId, sessionId);
+    await saveChat(currentMsg, fallback, chatId, userId, sessionId);
     return fallback;
   }
 }
@@ -222,30 +222,37 @@ async function getFallbackResponse() {
   }
 }
 
-async function saveChat(userMsg, aiMsg, chatId, sessionId = 'default') {
-  if (!db) return;
+async function saveChat(userMsg, aiMsg, chatId, userId, sessionId = 'default') {
+  if (!db || !userId) return;
   
-  db.data.sessions[sessionId] = db.data.sessions[sessionId] || [];
-  db.data.sessions[sessionId].push({ 
+  // Initialize user data structure if needed
+  db.data.users[userId] = db.data.users[userId] || { sessions: {}, activeSession: 'default' };
+  db.data.users[userId].sessions[sessionId] = db.data.users[userId].sessions[sessionId] || [];
+  
+  db.data.users[userId].sessions[sessionId].push({ 
     user: userMsg, 
     ai: aiMsg, 
     chatId: chatId || 'default',
     timestamp: Date.now() 
   });
   
-  const allChats = Object.values(db.data.sessions).flat();
-  if (allChats.length > 50 && !db.data.summary) {
-    db.data.summary = await createSummary();
+  // Only create summary for this user's chats
+  const userChats = Object.values(db.data.users[userId].sessions).flat();
+  if (userChats.length > 50 && !db.data.users[userId].summary) {
+    db.data.users[userId].summary = await createSummary(userId);
   }
   
   await db.write();
 }
 
-async function createSummary() {
+async function createSummary(userId) {
   const apiKey = process.env.GROQ_API_KEY;
-  if (!apiKey) return null;
+  if (!apiKey || !userId) return null;
   
-  const allChats = Object.values(db.data.sessions || {}).flat();
+  const userData = db.data.users[userId];
+  if (!userData) return null;
+  
+  const allChats = Object.values(userData.sessions || {}).flat();
   const recent = allChats.slice(-20);
   const text = recent.map(c => `U: ${c.user}\nA: ${c.ai}`).join('\n');
   
@@ -289,35 +296,42 @@ async function analyzeContent(content) {
   }
 }
 
-function getChats(sessionId = null) {
-  if (!db) return [];
+function getChats(userId = null, sessionId = null) {
+  if (!db || !userId) return [];
+  const userData = db.data.users[userId];
+  if (!userData) return [];
   if (sessionId) {
-    return db.data.sessions[sessionId] || [];
+    return userData.sessions[sessionId] || [];
   }
-  return Object.values(db.data.sessions || {}).flat();
+  return Object.values(userData.sessions || {}).flat();
 }
 
-function getSummary() {
-  if (!db) return null;
-  return db.data.summary || null;
+function getSummary(userId = null) {
+  if (!db || !userId) return null;
+  const userData = db.data.users[userId];
+  return userData?.summary || null;
 }
 
-async function clearChats(sessionId = null) {
-  if (!db) return;
+async function clearChats(userId = null, sessionId = null) {
+  if (!db || !userId) return;
+  const userData = db.data.users[userId];
+  if (!userData) return;
+  
   if (sessionId) {
-    db.data.sessions[sessionId] = [];
+    userData.sessions[sessionId] = [];
   } else {
-    db.data.sessions = {};
+    userData.sessions = {};
   }
-  db.data.summary = null;
+  userData.summary = null;
   await db.write();
 }
 
-async function exportChats() {
-  if (!db) return JSON.stringify({ sessions: {}, summary: null });
+async function exportChats(userId = null) {
+  if (!db || !userId) return JSON.stringify({ sessions: {}, summary: null });
+  const userData = db.data.users[userId] || { sessions: {}, activeSession: 'default' };
   return JSON.stringify({ 
-    sessions: db.data.sessions, 
-    summary: db.data.summary 
+    sessions: userData.sessions, 
+    summary: userData.summary 
   }, null, 2);
 }
 

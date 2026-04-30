@@ -193,21 +193,15 @@ async function searchWeb(query) {
   }
 }
 
-// Load sessions
+// Load sessions - private to user only
 async function loadSessions() {
   setLoading(true);
   try {
     const res = await fetch('/api/sessions', { headers: getHeaders() });
     const data = await res.json();
     
-    sessionsDiv.innerHTML = '';
-    for (const sid of data.sessions) {
-      const tag = document.createElement('div');
-      tag.className = 'session-tag' + (sid === data.active ? ' active' : '');
-      tag.textContent = sid.slice(0, 12);
-      tag.onclick = () => switchSession(sid);
-      sessionsDiv.appendChild(tag);
-    }
+    // Hide sessions bar for privacy - user's chats are private
+    sessionsDiv.style.display = 'none';
     
     if (data.active) {
       currentSession = data.active;
@@ -271,7 +265,7 @@ async function loadChats(sid) {
 async function showHistory() {
   setLoading(true);
   try {
-    const res = await fetch('/api/chats', { headers: getHeaders() });
+    const res = await fetch('/api/chats?session=' + currentSession, { headers: getHeaders() });
     const data = await res.json();
     const count = data.chats?.length || 0;
     const summary = data.summary || 'None';
