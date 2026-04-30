@@ -1,10 +1,8 @@
 #!/bin/bash
 
-# Initialize database if it doesn't exist
-if [ ! -f "db.json" ]; then
-    echo '{"sessions": {}, "activeSession": "default", "summary": null}' > db.json
-    echo "Database initialized"
-fi
+# Initialize fresh database (clears old shared chats)
+echo '{"sessions": {}, "activeSession": null, "summary": null}' > db.json
+echo "Database initialized"
 
 # Start the application
 exec node server.js

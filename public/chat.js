@@ -5,7 +5,13 @@ const sessionsDiv = document.getElementById('sessions');
 const statusDiv = document.getElementById('connection-status');
 
 let ws = null;
-let currentSession = localStorage.getItem('chatbot_session') || 'default';
+// Generate unique user ID for isolation
+let userId = localStorage.getItem('chatbot_user_id');
+if (!userId) {
+  userId = 'user_' + Math.random().toString(36).substring(2, 15) + Date.now();
+  localStorage.setItem('chatbot_user_id', userId);
+}
+let currentSession = localStorage.getItem('chatbot_session') || userId;
 let isSearchMode = false;
 let chatHistory = [];
 let reconnectAttempts = 0;
