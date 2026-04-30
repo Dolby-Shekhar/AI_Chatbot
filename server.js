@@ -30,7 +30,17 @@ const upload = multer({
 });
 
 const adapter = new JSONFile('db.json');
-const db = new Low(adapter, { sessions: {}, activeSession: 'default', summary: null });
+const db = new Low(adapter, { users: {}, summary: null });
+
+// Get userId from request header or generate new one
+function getUserId(req, res) {
+  let userId = req.headers['x-user-id'];
+  if (!userId) {
+    userId = 'user_' + uuidv4().substring(0, 8);
+    res.setHeader('X-User-Id', userId);
+  }
+  return userId;
+}
 
 // Initialize chatbot with DB
 chatbot.init(db);
@@ -82,29 +92,35 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: Date.now() });
 });
 
-// REST API endpoints
+// REST API endpoints - User-scoped
 app.get('/api/sessions', (req, res) => {
-  const sessions = Object.keys(db.data.sessions || {}).sort().reverse();
-  res.json({ sessions, active: db.data.activeSession });
+  const userId = getUserId(req, res);
+  const user = db.data.users[userId] || { sessions: {}, activeSession: 'default' };
+  const sessions = Object.keys(user.sessions || {}).sort().reverse();
+  res.json({ sessions, active: user.activeSession });
 });
 
 // IMPORTANT: Specific routes must come before parameterized routes
 app.post('/api/sessions/new', async (req, res) => {
+  const userId = getUserId(req, res);
+  if (!db.data.users[userId]) {
+    db.data.users[userId] = { sessions: {}, activeSession: 'default' };
+  }
   const sessionId = 'chat_' + Date.now();
-  db.data.sessions[sessionId] = [];
-  db.data.activeSession = sessionId;
+  db.data.users[userId].sessions[sessionId] = [];
+  db.data.users[userId].activeSession = sessionId;
   await db.write();
   res.json({ sessionId });
 });
 
 app.post('/api/sessions/:sessionId/activate', async (req, res) => {
+  const userId = getUserId(req, res);
   const { sessionId } = req.params;
-  // Prevent matching "new" as a sessionId
   if (sessionId === 'new') {
     return res.status(400).json({ error: 'Invalid session ID' });
   }
-  if (db.data.sessions[sessionId]) {
-    db.data.activeSession = sessionId;
+  if (db.data.users[userId]?.sessions[sessionId]) {
+    db.data.users[userId].activeSession = sessionId;
     await db.write();
     res.json({ success: true });
   } else {
@@ -113,27 +129,28 @@ app.post('/api/sessions/:sessionId/activate', async (req, res) => {
 });
 
 app.get('/api/chats', (req, res) => {
-  const sessionId = req.query.session || db.data.activeSession;
-  const chats = db.data.sessions[sessionId] || [];
+  const userId = getUserId(req, res);
+  const user = db.data.users[userId] || { sessions: {}, activeSession: 'default' };
+  const sessionId = req.query.session || user.activeSession;
+  const chats = user.sessions?.[sessionId] || [];
   res.json({ chats, summary: db.data.summary });
 });
 
 app.post('/api/chats/clear', async (req, res) => {
-  const sessionId = req.query.session || db.data.activeSession;
-  if (db.data.sessions[sessionId]) {
-    db.data.sessions[sessionId] = [];
+  const userId = getUserId(req, res);
+  const user = db.data.users[userId];
+  const sessionId = req.query.session || user?.activeSession;
+  if (user?.sessions?.[sessionId]) {
+    user.sessions[sessionId] = [];
   }
   await db.write();
   res.json({ success: true });
 });
 
 app.get('/api/chats/export', async (req, res) => {
-  const data = {
-    sessions: db.data.sessions,
-    activeSession: db.data.activeSession,
-    summary: db.data.summary
-  };
-  res.json(data);
+  const userId = getUserId(req, res);
+  const user = db.data.users[userId] || { sessions: {}, activeSession: 'default' };
+  res.json({ sessions: user.sessions, activeSession: user.activeSession, summary: db.data.summary });
 });
 
 // File upload endpoint
@@ -195,8 +212,13 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
-// WebSocket handling with streaming and session support
-wss.on('connection', (ws) => {
+// WebSocket handling with streaming and user-scoped session support
+wss.on('connection', (ws, req) => {
+  let userId = req.headers['x-user-id'];
+  if (!userId) {
+    userId = 'user_' + uuidv4().substring(0, 8);
+  }
+  
   ws.on('message', async (data) => {
     try {
       const payload = JSON.parse(data);
@@ -204,12 +226,18 @@ wss.on('connection', (ws) => {
       
       if (!msg) throw new Error('No message provided');
       
-      // Switch to requested session or use active
-      const targetSession = sessionId || db.data.activeSession;
-      if (!db.data.sessions[targetSession]) {
-        db.data.sessions[targetSession] = [];
+      // Initialize user if not exists
+      if (!db.data.users[userId]) {
+        db.data.users[userId] = { sessions: {}, activeSession: 'default' };
       }
-      db.data.activeSession = targetSession;
+      
+      // Switch to requested session or use active
+      const targetSession = sessionId || db.data.users[userId].activeSession;
+      if (!db.data.users[userId].sessions[targetSession]) {
+        db.data.users[userId].sessions[targetSession] = [];
+      }
+      db.data.users[userId].activeSession = targetSession;
+      await db.write();
       
       // Stream response to client
       let fullResponse = '';
@@ -252,9 +280,9 @@ const startServer = async () => {
     console.error('Failed to read database:', e.message);
   }
   
-  // Initialize default session
-  db.data.sessions = db.data.sessions || { default: [] };
-  db.data.activeSession = db.data.activeSession || 'default';
+  // Initialize data structure for users
+  db.data.users = db.data.users || {};
+  db.data.summary = db.data.summary || null;
   
   try {
     await db.write();

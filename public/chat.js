@@ -11,7 +11,12 @@ if (!userId) {
   userId = 'user_' + Math.random().toString(36).substring(2, 15) + Date.now();
   localStorage.setItem('chatbot_user_id', userId);
 }
-let currentSession = localStorage.getItem('chatbot_session') || userId;
+let currentSession = localStorage.getItem('chatbot_session') || 'default';
+
+// Get headers with userId for API calls
+function getHeaders() {
+  return { 'X-User-Id': userId };
+}
 let isSearchMode = false;
 let chatHistory = [];
 let reconnectAttempts = 0;
@@ -191,7 +196,7 @@ async function searchWeb(query) {
 async function loadSessions() {
   setLoading(true);
   try {
-    const res = await fetch('/api/sessions');
+    const res = await fetch('/api/sessions', { headers: getHeaders() });
     const data = await res.json();
     
     sessionsDiv.innerHTML = '';
@@ -225,7 +230,7 @@ async function newSession() {
   
   setLoading(true);
   try {
-    const res = await fetch('/api/sessions/new', { method: 'POST' });
+    const res = await fetch('/api/sessions/new', { method: 'POST', headers: getHeaders() });
     const data = await res.json();
     currentSession = data.sessionId;
     saveSession();
