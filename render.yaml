@@ -1,0 +1,13 @@
+services:
+  - type: web
+    name: ai-chatbot
+    runtime: node
+    region: oregon
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: NODE_VERSION
+        value: "20"
+      - key: PORT
+        value: "10000"
+    plan: free
