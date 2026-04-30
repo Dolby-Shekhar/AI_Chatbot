@@ -39,7 +39,8 @@ function formatTime(timestamp) {
 
 // Initialize WebSocket
 function initWebSocket() {
-  ws = new WebSocket('ws://' + location.host);
+  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
+  ws = new WebSocket(protocol + '//' + location.host);
   
   ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
@@ -101,14 +102,6 @@ function attemptReconnect() {
   }
 }
 
-// Start connection
-initWebSocket();
-
-// Save session to localStorage
-function saveSession() {
-  localStorage.setItem('chatbot_session', currentSession);
-}
-
 // Debounce utility
 function debounce(func, wait) {
   let timeout;
@@ -123,7 +116,7 @@ function debounce(func, wait) {
 }
 
 // Debounced send (300ms)
-const debouncedSend = debounce(() => {
+function doSend() {
   const msg = input.value.trim();
   if (!msg) return;
   
@@ -140,12 +133,22 @@ const debouncedSend = debounce(() => {
     // Will retry on reconnection
     addMessage('Message saved. Will send when reconnected...', 'ai');
   }
-}, 300);
+}
+
+const debouncedSend = debounce(doSend, 300);
 
 // Send message with retry support
 async function send() {
   debouncedSend();
 }
+
+// Save session to localStorage
+function saveSession() {
+  localStorage.setItem('chatbot_session', currentSession);
+}
+
+// Start connection
+initWebSocket();
 
 // Toggle web search
 function toggleSearch() {
