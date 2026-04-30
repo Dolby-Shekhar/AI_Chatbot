@@ -19,3 +19,7 @@ Thumbs.db
 .vscode/
 *.swp
 *.swo
+
+# Render
+start.sh
+render.yaml

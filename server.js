@@ -11,6 +11,7 @@ const rateLimit = require('express-rate-limit');
 const compression = require('compression');
 const cors = require('cors');
 const { v4: uuidv4 } = require('uuid');
+const crypto = require('crypto');
 require('dotenv').config();
 
 // Configuration
@@ -26,21 +27,11 @@ const wss = new WebSocket.Server({ server });
 // File upload config
 const upload = multer({ 
   storage: multer.memoryStorage(),
-  limits: { fileSize: 10 * 1024 * 1024 } // 10MB limit
+  limits: { fileSize: 10 * 1024 * 1024 }
 });
 
 const adapter = new JSONFile('db.json');
-const db = new Low(adapter, { users: {}, summary: null });
-
-// Get userId from request header or generate new one
-function getUserId(req, res) {
-  let userId = req.headers['x-user-id'];
-  if (!userId) {
-    userId = 'user_' + uuidv4().substring(0, 8);
-    res.setHeader('X-User-Id', userId);
-  }
-  return userId;
-}
+const db = new Low(adapter, { sessions: {}, activeSession: 'default', summary: null });
 
 // Initialize chatbot with DB
 chatbot.init(db);
@@ -79,8 +70,8 @@ app.use(helmet({
 
 // Rate limiting
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100, // limit each IP to 100 requests per windowMs
+  windowMs: 15 * 60 * 1000,
+  max: 100,
   message: { error: 'Too many requests, please try again later.' },
   standardHeaders: true,
   legacyHeaders: false,
@@ -92,35 +83,28 @@ app.get('/api/health', (req, res) => {
   res.json({ status: 'ok', timestamp: Date.now() });
 });
 
-// REST API endpoints - User-scoped
+// REST API endpoints
 app.get('/api/sessions', (req, res) => {
-  const userId = getUserId(req, res);
-  const user = db.data.users[userId] || { sessions: {}, activeSession: 'default' };
-  const sessions = Object.keys(user.sessions || {}).sort().reverse();
-  res.json({ sessions, active: user.activeSession });
+  const sessions = Object.keys(db.data.sessions || {}).sort().reverse();
+  res.json({ sessions, active: db.data.activeSession });
 });
 
-// IMPORTANT: Specific routes must come before parameterized routes
+// Specific routes must come before parameterized routes
 app.post('/api/sessions/new', async (req, res) => {
-  const userId = getUserId(req, res);
-  if (!db.data.users[userId]) {
-    db.data.users[userId] = { sessions: {}, activeSession: 'default' };
-  }
   const sessionId = 'chat_' + Date.now();
-  db.data.users[userId].sessions[sessionId] = [];
-  db.data.users[userId].activeSession = sessionId;
+  db.data.sessions[sessionId] = [];
+  db.data.activeSession = sessionId;
   await db.write();
   res.json({ sessionId });
 });
 
 app.post('/api/sessions/:sessionId/activate', async (req, res) => {
-  const userId = getUserId(req, res);
   const { sessionId } = req.params;
   if (sessionId === 'new') {
     return res.status(400).json({ error: 'Invalid session ID' });
   }
-  if (db.data.users[userId]?.sessions[sessionId]) {
-    db.data.users[userId].activeSession = sessionId;
+  if (db.data.sessions[sessionId]) {
+    db.data.activeSession = sessionId;
     await db.write();
     res.json({ success: true });
   } else {
@@ -129,28 +113,27 @@ app.post('/api/sessions/:sessionId/activate', async (req, res) => {
 });
 
 app.get('/api/chats', (req, res) => {
-  const userId = getUserId(req, res);
-  const user = db.data.users[userId] || { sessions: {}, activeSession: 'default' };
-  const sessionId = req.query.session || user.activeSession;
-  const chats = user.sessions?.[sessionId] || [];
+  const sessionId = req.query.session || db.data.activeSession;
+  const chats = db.data.sessions[sessionId] || [];
   res.json({ chats, summary: db.data.summary });
 });
 
 app.post('/api/chats/clear', async (req, res) => {
-  const userId = getUserId(req, res);
-  const user = db.data.users[userId];
-  const sessionId = req.query.session || user?.activeSession;
-  if (user?.sessions?.[sessionId]) {
-    user.sessions[sessionId] = [];
+  const sessionId = req.query.session || db.data.activeSession;
+  if (db.data.sessions[sessionId]) {
+    db.data.sessions[sessionId] = [];
   }
   await db.write();
   res.json({ success: true });
 });
 
 app.get('/api/chats/export', async (req, res) => {
-  const userId = getUserId(req, res);
-  const user = db.data.users[userId] || { sessions: {}, activeSession: 'default' };
-  res.json({ sessions: user.sessions, activeSession: user.activeSession, summary: db.data.summary });
+  const data = {
+    sessions: db.data.sessions,
+    activeSession: db.data.activeSession,
+    summary: db.data.summary
+  };
+  res.json(data);
 });
 
 // File upload endpoint
@@ -166,7 +149,6 @@ app.post('/api/analyze', upload.single('file'), async (req, res) => {
       if (req.file.mimetype === 'text/plain' || req.file.mimetype === 'text/markdown') {
         content = req.file.buffer.toString('utf8');
       } else if (req.file.mimetype.includes('image')) {
-        // For images, we'd need vision API - use description for now
         content = `[Image uploaded: ${req.file.originalname}]`;
       } else {
         return res.status(400).json({ error: 'Unsupported file type' });
@@ -188,7 +170,6 @@ app.get('/api/search', async (req, res) => {
   if (!query) return res.status(400).json({ error: 'No query provided' });
   
   try {
-    // Using DuckDuckGo instant API (free, no key)
     const response = await axios.get('https://api.duckduckgo.com/', {
       params: {
         q: query,
@@ -212,19 +193,8 @@ app.get('/api/search', async (req, res) => {
   }
 });
 
-// WebSocket handling with streaming and user-scoped session support
-wss.on('connection', (ws, req) => {
-  // Get userId from header or query param
-  let userId = req.headers['x-user-id'];
-  if (!userId) {
-    // Extract from query string
-    const urlObj = new URL(req.url, 'http://localhost');
-    userId = urlObj.searchParams.get('x-user-id');
-  }
-  if (!userId) {
-    userId = 'user_' + uuidv4().substring(0, 8);
-  }
-  
+// WebSocket handling with streaming and session support
+wss.on('connection', (ws) => {
   ws.on('message', async (data) => {
     try {
       const payload = JSON.parse(data);
@@ -232,18 +202,12 @@ wss.on('connection', (ws, req) => {
       
       if (!msg) throw new Error('No message provided');
       
-      // Initialize user if not exists
-      if (!db.data.users[userId]) {
-        db.data.users[userId] = { sessions: {}, activeSession: 'default' };
-      }
-      
       // Switch to requested session or use active
-      const targetSession = sessionId || db.data.users[userId].activeSession;
-      if (!db.data.users[userId].sessions[targetSession]) {
-        db.data.users[userId].sessions[targetSession] = [];
+      const targetSession = sessionId || db.data.activeSession;
+      if (!db.data.sessions[targetSession]) {
+        db.data.sessions[targetSession] = [];
       }
-      db.data.users[userId].activeSession = targetSession;
-      await db.write();
+      db.data.activeSession = targetSession;
       
       // Stream response to client
       let fullResponse = '';
@@ -286,9 +250,9 @@ const startServer = async () => {
     console.error('Failed to read database:', e.message);
   }
   
-  // Initialize data structure for users
-  db.data.users = db.data.users || {};
-  db.data.summary = db.data.summary || null;
+  // Initialize default session
+  db.data.sessions = db.data.sessions || { default: [] };
+  db.data.activeSession = db.data.activeSession || 'default';
   
   try {
     await db.write();
