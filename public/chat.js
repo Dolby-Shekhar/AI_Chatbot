@@ -1,168 +1,258 @@
+﻿/* global DOMPurify */
+
 const chatDiv = document.getElementById('chat');
 const input = document.getElementById('input');
 const typingDiv = document.getElementById('typing');
 const sessionsDiv = document.getElementById('sessions');
-const statusDiv = document.getElementById('connection-status');
+const authStatus = document.getElementById('auth-status');
+const authForm = document.getElementById('auth-form');
+const authLogoutBtn = document.getElementById('logout-btn');
+const connectionStatus = document.getElementById('connection-status');
 
 let ws = null;
-// Generate unique user ID for isolation
+let jwtToken = localStorage.getItem('chatbot_jwt') || '';
+let authUsername = localStorage.getItem('chatbot_username') || '';
 let userId = localStorage.getItem('chatbot_user_id');
 if (!userId) {
-  userId = 'user_' + Math.random().toString(36).substring(2, 15) + Date.now();
+  userId = 'anon_' + Math.random().toString(36).substring(2, 15) + Date.now();
   localStorage.setItem('chatbot_user_id', userId);
 }
 let currentSession = localStorage.getItem('chatbot_session') || 'default';
-
-// Get headers with userId for API calls
-function getHeaders() {
-  return { 'X-User-Id': userId };
-}
 let isSearchMode = false;
-let chatHistory = [];
 let reconnectAttempts = 0;
 const MAX_RECONNECT_ATTEMPTS = 5;
 let autoScroll = true;
-let pendingMessages = []; // For retry on reconnection
-
-// Search results cache (5 min TTL)
+let pendingMessages = [];
 const searchCache = new Map();
 const SEARCH_CACHE_TTL = 5 * 60 * 1000;
+const themeColors = {
+  dark: '#1a1a2e',
+  blue: '#16213e',
+  purple: '#1a1a3e',
+  green: '#0d1f0d',
+  red: '#1f0d0d'
+};
+let currentTheme = localStorage.getItem('chatbot_theme') || 'dark';
 
-// Clear expired cache entries periodically (every 5 minutes)
-setInterval(() => {
-  const now = Date.now();
-  for (const [key, value] of searchCache) {
-    if (now - value.timestamp > SEARCH_CACHE_TTL) {
-      searchCache.delete(key);
-    }
+setTheme(currentTheme);
+initApp();
+
+function getHeaders(useJson = true) {
+  const headers = { 'X-User-Id': userId };
+  if (jwtToken) {
+    headers.Authorization = 'Bearer ' + jwtToken;
   }
-}, 5 * 60 * 1000);
-
-// Keyboard navigation for messages
-let currentMessageIndex = -1;
-const messageElements = [];
-
-// Format timestamp
-function formatTime(timestamp) {
-  const date = new Date(timestamp);
-  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+  if (useJson) {
+    headers['Content-Type'] = 'application/json';
+  }
+  return headers;
 }
 
-// Initialize WebSocket
+function initApp() {
+  updateAuthUI();
+  saveSession();
+  initWebSocket();
+  loadSessions();
+}
+
+function updateAuthUI() {
+  if (jwtToken) {
+    authStatus.textContent = 'Signed in as ' + (authUsername || 'authenticated user');
+    authLogoutBtn.style.display = 'inline-flex';
+    authForm.style.display = 'none';
+  } else {
+    authStatus.textContent = 'Anonymous mode';
+    authLogoutBtn.style.display = 'none';
+    authForm.style.display = 'flex';
+  }
+}
+
+function saveSession() {
+  localStorage.setItem('chatbot_session', currentSession);
+}
+
+function setConnectionStatus(state) {
+  if (!connectionStatus) return;
+  connectionStatus.className = 'status ' + state;
+  const label = connectionStatus.querySelector('.status-text');
+  if (!label) return;
+
+  const labels = {
+    connected: 'Online',
+    disconnected: 'Offline',
+    connecting: 'Connecting...'
+  };
+
+  label.textContent = labels[state] || 'Connecting...';
+}
+
+function attemptReconnect() {
+  if (reconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
+    setConnectionStatus('disconnected');
+    return;
+  }
+
+  reconnectAttempts += 1;
+  setConnectionStatus('connecting');
+  const delay = Math.min(1000 * reconnectAttempts, 10000);
+  window.setTimeout(() => initWebSocket(), delay);
+}
+
+async function registerUser() {
+  const username = document.getElementById('auth-username').value.trim();
+  const password = document.getElementById('auth-password').value;
+  if (!username || !password) {
+    addMessage('Please enter a username and password to register.', 'error');
+    return;
+  }
+  setLoading(true);
+  try {
+    const res = await fetch('/api/auth/register', {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Registration failed');
+    jwtToken = data.token;
+    authUsername = username;
+    localStorage.setItem('chatbot_jwt', jwtToken);
+    localStorage.setItem('chatbot_username', authUsername);
+    updateAuthUI();
+    addMessage('Registered successfully. Welcome, ' + username + '!', 'ai');
+    reconnectWebSocket();
+    loadSessions();
+  } catch (e) {
+    addMessage('Registration failed: ' + e.message, 'error');
+  } finally {
+    setLoading(false);
+  }
+}
+
+async function loginUser() {
+  const username = document.getElementById('auth-username').value.trim();
+  const password = document.getElementById('auth-password').value;
+  if (!username || !password) {
+    addMessage('Please enter a username and password to log in.', 'error');
+    return;
+  }
+  setLoading(true);
+  try {
+    const res = await fetch('/api/auth/login', {
+      method: 'POST',
+      headers: getHeaders(),
+      body: JSON.stringify({ username, password })
+    });
+    const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Login failed');
+    jwtToken = data.token;
+    authUsername = username;
+    localStorage.setItem('chatbot_jwt', jwtToken);
+    localStorage.setItem('chatbot_username', authUsername);
+    updateAuthUI();
+    addMessage('Logged in successfully. Welcome back, ' + username + '!', 'ai');
+    reconnectWebSocket();
+    loadSessions();
+  } catch (e) {
+    addMessage('Login failed: ' + e.message, 'error');
+  } finally {
+    setLoading(false);
+  }
+}
+
+function logoutUser() {
+  jwtToken = '';
+  authUsername = '';
+  localStorage.removeItem('chatbot_jwt');
+  localStorage.removeItem('chatbot_username');
+  updateAuthUI();
+  addMessage('You are now signed out. Anonymous mode is active.', 'ai');
+  reconnectWebSocket();
+  loadSessions();
+}
+
+function reconnectWebSocket() {
+  if (ws) {
+    try {
+      ws.close();
+    } catch (e) {
+      console.debug('WebSocket close error', e && e.message);
+    }
+    ws = null;
+  }
+  initWebSocket();
+}
+
 function initWebSocket() {
+  setConnectionStatus('connecting');
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  // Send userId as query param since WebSocket doesn't support custom headers
-  ws = new WebSocket(protocol + '//' + location.host + '?x-user-id=' + encodeURIComponent(userId));
-  
+  const tokenParam = jwtToken ? '&token=' + encodeURIComponent(jwtToken) : '';
+  ws = new WebSocket(protocol + '//' + location.host + '?x-user-id=' + encodeURIComponent(userId) + tokenParam);
+
   ws.onmessage = (event) => {
     const data = JSON.parse(event.data);
-    
     if (data.type === 'chunk') {
       appendToLastMessage(data.content);
     } else if (data.type === 'done') {
       typingDiv.style.display = 'none';
       playSound();
-      // Clear from pending after success
-      if (pendingMessages.length > 0) {
-        pendingMessages.shift();
-      }
+      if (pendingMessages.length > 0) pendingMessages.shift();
     } else if (data.type === 'error') {
       typingDiv.style.display = 'none';
       addMessage('Error: ' + data.content, 'error');
     }
   };
-  
+
   ws.onopen = () => {
     setConnectionStatus('connected');
     reconnectAttempts = 0;
     loadSessions();
-    // Retry pending messages
     retryPendingMessages();
   };
-  
+
   ws.onclose = () => {
     setConnectionStatus('disconnected');
     attemptReconnect();
   };
-  
+
   ws.onerror = () => {
     setConnectionStatus('disconnected');
   };
 }
 
-// Retry pending messages after reconnection
 function retryPendingMessages() {
-  while (pendingMessages.length > 0 && ws && ws.readyState === WebSocket.OPEN) {
-    const msg = pendingMessages[0];
-    ws.send(JSON.stringify({ msg, sessionId: currentSession }));
-    break; // Send one at a time
-  }
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (pendingMessages.length === 0) return;
+  ws.send(JSON.stringify({ msg: pendingMessages[0], sessionId: currentSession }));
 }
 
-// Connection status
-function setConnectionStatus(status) {
-  statusDiv.className = 'status ' + status;
-  statusDiv.textContent = status === 'connected' ? '●' : (status === 'connecting' ? '◐' : '○');
-}
-
-// Reconnection
-function attemptReconnect() {
-  if (reconnectAttempts < MAX_RECONNECT_ATTEMPTS) {
-    reconnectAttempts++;
-    setConnectionStatus('connecting');
-    setTimeout(initWebSocket, Math.min(1000 * Math.pow(2, reconnectAttempts), 30000));
-  }
-}
-
-// Debounce utility
-function debounce(func, wait) {
-  let timeout;
-  return function executedFunction(...args) {
-    const later = () => {
-      clearTimeout(timeout);
-      func(...args);
-    };
-    clearTimeout(timeout);
-    timeout = setTimeout(later, wait);
-  };
-}
-
-// Debounced send (300ms)
 function doSend() {
   const msg = input.value.trim();
   if (!msg) return;
-  
   input.value = '';
+
+  if (isSearchMode) {
+    searchWeb(msg);
+    return;
+  }
+
   addMessage(msg, 'user');
   typingDiv.style.display = 'flex';
-  
-  // Add to pending for retry on disconnect
   pendingMessages.push(msg);
-  
+
   if (ws && ws.readyState === WebSocket.OPEN) {
     ws.send(JSON.stringify({ msg, sessionId: currentSession }));
   } else {
-    // Will retry on reconnection
-    addMessage('Message saved. Will send when reconnected...', 'ai');
+    addMessage('Message queued: will send when connection is restored.', 'ai');
   }
 }
 
-const debouncedSend = debounce(doSend, 300);
+const debouncedSend = debounce(doSend, 200);
 
-// Send message with retry support
-async function send() {
+function send() {
   debouncedSend();
 }
 
-// Save session to localStorage
-function saveSession() {
-  localStorage.setItem('chatbot_session', currentSession);
-}
-
-// Start connection
-initWebSocket();
-
-// Toggle web search
 function toggleSearch() {
   isSearchMode = !isSearchMode;
   const btn = document.getElementById('searchBtn');
@@ -170,39 +260,32 @@ function toggleSearch() {
   input.placeholder = isSearchMode ? 'Search the web...' : 'Type your message...';
 }
 
-// Search web with caching
 async function searchWeb(query) {
-  // Check cache first
   const cached = searchCache.get(query);
   if (cached && Date.now() - cached.timestamp < SEARCH_CACHE_TTL) {
     addMessage('🔍 ' + cached.result, 'ai');
     return;
   }
-  
+
   try {
-    const res = await fetch('/api/search?q=' + encodeURIComponent(query));
+    const res = await fetch('/api/search?q=' + encodeURIComponent(query), { headers: getHeaders() });
     const data = await res.json();
-    const result = data.result || 'No results found';
-    
-    // Cache result
+    const result = data.result || 'No results found.';
     searchCache.set(query, { result, timestamp: Date.now() });
-    
     addMessage('🔍 ' + result, 'ai');
   } catch (e) {
     addMessage('Search error: ' + e.message, 'error');
   }
 }
 
-// Load sessions - private to user only
 async function loadSessions() {
   setLoading(true);
   try {
     const res = await fetch('/api/sessions', { headers: getHeaders() });
     const data = await res.json();
-    
-    // Hide sessions bar for privacy - user's chats are private
-    sessionsDiv.style.display = 'none';
-    
+    if (!res.ok) throw new Error(data.error || 'Unable to load sessions');
+
+    renderSessions(data.sessions || [], data.active);
     if (data.active) {
       currentSession = data.active;
       saveSession();
@@ -215,41 +298,51 @@ async function loadSessions() {
   }
 }
 
-// New session with confirmation if has messages
-async function newSession() {
-  if (chatDiv.children.length > 0) {
-    if (!confirm('Start a new chat? Current messages will be hidden.')) {
-      return;
-    }
+function renderSessions(sessions = [], activeSession) {
+  sessionsDiv.innerHTML = '';
+  // Keep the session bar hidden to preserve the privacy-first UX.
+  sessionsDiv.style.display = 'none';
+
+  if (!sessions || sessions.length === 0) {
+    return;
   }
-  
+
+  // Session controls remain intentionally hidden; session state is still
+  // maintained in the background for the current user.
+  void activeSession;
+}
+
+async function newSession() {
+  if (chatDiv.children.length > 0 && !confirm('Start a new chat? This will change the session view.')) {
+    return;
+  }
   setLoading(true);
   try {
-    const res = await fetch('/api/sessions/new', { method: 'POST', headers: getHeaders() });
+    const res = await fetch('/api/sessions/new', { method: 'POST', headers: getHeaders(), body: JSON.stringify({}) });
     const data = await res.json();
+    if (!res.ok) throw new Error(data.error || 'Failed to create session');
     currentSession = data.sessionId;
     saveSession();
     chatDiv.innerHTML = '';
     loadSessions();
+    addMessage('New session created: ' + data.sessionId, 'ai');
   } catch (e) {
-    console.error('New session error:', e);
+    addMessage('New session failed: ' + e.message, 'error');
   } finally {
     setLoading(false);
   }
 }
 
-// Switch session
-async function switchSession(sid) {
-  currentSession = sid;
+async function switchSession(sessionId) {
+  currentSession = sessionId;
   saveSession();
-  chatDiv.innerHTML = '';
+  await loadChats(sessionId);
   loadSessions();
 }
 
-// Load chats for session with timestamps
 async function loadChats(sid) {
   try {
-    const res = await fetch('/api/chats?session=' + sid, { headers: getHeaders() });
+    const res = await fetch('/api/chats?session=' + encodeURIComponent(sid), { headers: getHeaders() });
     const data = await res.json();
     chatDiv.innerHTML = '';
     for (const chat of data.chats || []) {
@@ -261,15 +354,14 @@ async function loadChats(sid) {
   }
 }
 
-// Show history modal
 async function showHistory() {
   setLoading(true);
   try {
-    const res = await fetch('/api/chats?session=' + currentSession, { headers: getHeaders() });
+    const res = await fetch('/api/chats?session=' + encodeURIComponent(currentSession), { headers: getHeaders() });
     const data = await res.json();
     const count = data.chats?.length || 0;
     const summary = data.summary || 'None';
-    alert('Conversations: ' + count + '\nSummary: ' + summary);
+    alert('Session: ' + currentSession + '\nMessages: ' + count + '\nSummary: ' + summary);
   } catch (e) {
     alert('Error loading history');
   } finally {
@@ -277,7 +369,6 @@ async function showHistory() {
   }
 }
 
-// Export chats
 async function exportChats() {
   setLoading(true);
   try {
@@ -288,31 +379,28 @@ async function exportChats() {
     const a = document.createElement('a');
     a.href = url;
     a.download = 'chat-export-' + Date.now() + '.json';
+    document.body.appendChild(a);
     a.click();
+    a.remove();
     URL.revokeObjectURL(url);
   } catch (e) {
-    alert('Export error: ' + e.message);
+    addMessage('Export error: ' + e.message, 'error');
   } finally {
     setLoading(false);
   }
 }
 
-// Upload file
 async function uploadFile(event) {
   const file = event.target.files[0];
   if (!file) return;
-  
   const formData = new FormData();
   formData.append('file', file);
-  
   typingDiv.style.display = 'flex';
   typingDiv.textContent = 'Analyzing file...';
-  
   try {
-    const res = await fetch('/api/analyze', { method: 'POST', body: formData });
+    const res = await fetch('/api/analyze', { method: 'POST', headers: { ...getHeaders(false) }, body: formData });
     const data = await res.json();
     typingDiv.style.display = 'none';
-    
     if (data.analysis) {
       addMessage('📄 ' + file.name, 'user');
       addMessage(data.analysis, 'ai');
@@ -323,18 +411,13 @@ async function uploadFile(event) {
     typingDiv.style.display = 'none';
     addMessage('Upload error: ' + e.message, 'error');
   }
-  
   event.target.value = '';
 }
 
-// Clear chat with confirmation
 async function clearChat() {
-  if (!confirm('Clear all messages in this session? This cannot be undone.')) {
-    return;
-  }
-  
+  if (!confirm('Clear all messages in this session? This cannot be undone.')) return;
   try {
-    await fetch('/api/chats/clear?session=' + currentSession, { method: 'POST', headers: getHeaders() });
+    await fetch('/api/chats/clear?session=' + encodeURIComponent(currentSession), { method: 'POST', headers: getHeaders() });
     chatDiv.innerHTML = '';
     addMessage('Chat cleared.', 'ai');
   } catch (e) {
@@ -342,7 +425,6 @@ async function clearChat() {
   }
 }
 
-// Copy message to clipboard
 function copyMessage(text) {
   navigator.clipboard.writeText(text).then(() => {
     addMessage('Copied to clipboard!', 'ai');
@@ -351,7 +433,6 @@ function copyMessage(text) {
   });
 }
 
-// Loading indicator
 function setLoading(loading) {
   if (loading) {
     typingDiv.style.display = 'flex';
@@ -361,20 +442,16 @@ function setLoading(loading) {
   }
 }
 
-// Add message to chat with timestamp
 function addMessage(msg, cls = 'ai', timestamp = null) {
   const div = document.createElement('div');
   div.className = 'message ' + cls;
-  
-  // Add timestamp for AI messages
   let timeStr = timestamp ? formatTime(timestamp) : '';
   if (cls === 'ai' && timeStr) {
     timeStr = '<span class="timestamp">' + timeStr + '</span>';
   }
-  
-  div.innerHTML = (timeStr || '') + formatMarkdown(msg);
-  
-  // Add copy button for AI messages
+  const raw = (timeStr || '') + formatMarkdown(msg);
+  const safe = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(raw) : raw;
+  div.innerHTML = safe;
   if (cls === 'ai') {
     const copyBtn = document.createElement('button');
     copyBtn.className = 'copy-btn';
@@ -383,12 +460,10 @@ function addMessage(msg, cls = 'ai', timestamp = null) {
     copyBtn.onclick = () => copyMessage(msg);
     div.appendChild(copyBtn);
   }
-  
   chatDiv.appendChild(div);
-  chatDiv.scrollTop = chatDiv.scrollHeight;
+  if (autoScroll) chatDiv.scrollTop = chatDiv.scrollHeight;
 }
 
-// Append to last AI message
 function appendToLastMessage(text) {
   let last = chatDiv.lastElementChild;
   if (!last || !last.classList.contains('ai')) {
@@ -396,54 +471,33 @@ function appendToLastMessage(text) {
     last.className = 'message ai';
     chatDiv.appendChild(last);
   }
-  last.innerHTML = formatMarkdown(last.textContent + text);
-  chatDiv.scrollTop = chatDiv.scrollHeight;
+  const raw = formatMarkdown((last.textContent || '') + text);
+  const safe = (typeof DOMPurify !== 'undefined') ? DOMPurify.sanitize(raw) : raw;
+  last.innerHTML = safe;
+  if (autoScroll) chatDiv.scrollTop = chatDiv.scrollHeight;
 }
 
-// Unified markdown formatting with proper HTML escaping
 function formatMarkdown(text) {
   if (!text) return '';
-  
-  // Escape HTML special characters first (XSS prevention)
   let html = text
     .replace(/&/g, '&amp;')
-    .replace(/</g, '<')
-    .replace(/>/g, '>');
-  
-  // Then apply markdown formatting
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;');
   html = html
-    // Headers
     .replace(/^### (.*$)/gm, '<h3>$1</h3>')
     .replace(/^## (.*$)/gm, '<h2>$1</h2>')
     .replace(/^# (.*$)/gm, '<h1>$1</h1>')
-    // Bold and Italic
     .replace(/\*\*\*(.*?)\*\*\*/g, '<strong><em>$1</em></strong>')
     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
     .replace(/\*(.*?)\*/g, '<em>$1</em>')
-    // Code blocks
     .replace(/```([\s\S]*?)```/g, '<pre><code>$1</code></pre>')
-    // Inline code
     .replace(/`(.*?)`/g, '<code>$1</code>')
-    // Links
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank">$1</a>')
-    // Lists
+    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, '<a href="$2" target="_blank" rel="noopener noreferrer">$1</a>')
     .replace(/^- (.*$)/gm, '<li>$1</li>')
-    .replace(/(<li>.*<\/li>)/s, '<ul>$1</ul>')
-    // Line breaks (do last)
+    .replace(/(<li>.*<\/li>)/gs, '<ul>$1</ul>')
     .replace(/\n/g, '<br>');
-  
   return html;
 }
-
-// Theme customization
-const themeColors = {
-  dark: '#1a1a2e',
-  blue: '#16213e', 
-  purple: '#1a1a3e',
-  green: '#0d1f0d',
-  red: '#1f0d0d'
-};
-let currentTheme = localStorage.getItem('chatbot_theme') || 'dark';
 
 function setTheme(theme) {
   currentTheme = theme;
@@ -451,7 +505,6 @@ function setTheme(theme) {
   document.body.style.background = themeColors[theme] || themeColors.dark;
 }
 
-// Toggle dark mode (cycles through themes)
 function toggleDark() {
   const themes = Object.keys(themeColors);
   const idx = themes.indexOf(currentTheme);
@@ -459,58 +512,79 @@ function toggleDark() {
   setTheme(nextTheme);
 }
 
-// Apply saved theme on load
-document.body.style.background = themeColors[currentTheme] || themeColors.dark;
-
-// Sound notification - simplified
 function playSound() {
   try {
     const audioCtx = new (window.AudioContext || window.webkitAudioContext)();
     const oscillator = audioCtx.createOscillator();
     const gainNode = audioCtx.createGain();
-    
     oscillator.connect(gainNode);
     gainNode.connect(audioCtx.destination);
-    
     oscillator.frequency.value = 800;
     oscillator.type = 'sine';
     gainNode.gain.value = 0.1;
-    
     oscillator.start();
     oscillator.stop(audioCtx.currentTime + 0.1);
-  } catch (e) {}
+  } catch (e) {
+    console.debug('playSound error', e && e.message);
+  }
 }
 
-// Keyboard shortcuts
+function debounce(func, wait) {
+  let timeout;
+  return function (...args) {
+    clearTimeout(timeout);
+    timeout = setTimeout(() => func.apply(this, args), wait);
+  };
+}
+
+function formatTime(timestamp) {
+  const date = new Date(timestamp);
+  return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+}
+
+window.send = send;
+window.searchWeb = searchWeb;
+window.switchSession = switchSession;
+window.showHistory = showHistory;
+window.exportChats = exportChats;
+window.uploadFile = uploadFile;
+window.toggleDark = toggleDark;
+window.toggleEmojiPicker = toggleEmojiPicker;
+window.insertEmoji = insertEmoji;
+window.registerUser = registerUser;
+window.loginUser = loginUser;
+window.logoutUser = logoutUser;
+window.newSession = newSession;
+
 document.addEventListener('keydown', (e) => {
-  // Ctrl+N: New session
   if (e.ctrlKey && e.key === 'n') {
     e.preventDefault();
     newSession();
   }
-  // Ctrl+K: Toggle search
   if (e.ctrlKey && e.key === 'k') {
     e.preventDefault();
     toggleSearch();
   }
-  // Escape: Close search mode
   if (e.key === 'Escape' && isSearchMode) {
     toggleSearch();
   }
-  // Ctrl+Shift+C: Clear chat
-  if (e.ctrlKey && e.shiftKey && e.key === 'C') {
+  if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === 'c') {
     e.preventDefault();
     clearChat();
   }
+  if (e.ctrlKey && e.key.toLowerCase() === 'm') {
+    e.preventDefault();
+    toggleVoice();
+  }
 });
 
-// Auto-scroll functionality
+document.body.style.background = themeColors[currentTheme] || themeColors.dark;
+
 chatDiv.addEventListener('scroll', () => {
   const { scrollTop, scrollHeight, clientHeight } = chatDiv;
   autoScroll = scrollTop + clientHeight >= scrollHeight - 50;
 });
 
-// Online/Offline detection
 window.addEventListener('online', () => {
   setConnectionStatus('connected');
   initWebSocket();
@@ -521,45 +595,36 @@ window.addEventListener('offline', () => {
   addMessage('You are offline. Messages will be sent when reconnected.', 'ai');
 });
 
-// ========== VOICE INPUT (Web Speech API) ==========
 let recognition = null;
 let isListening = false;
-
 function initVoice() {
   const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SpeechRecognition) {
     addMessage('Voice input not supported in this browser.', 'error');
     return null;
   }
-  
   const rec = new SpeechRecognition();
   rec.continuous = false;
   rec.interimResults = true;
   rec.lang = 'en-US';
-  
   rec.onresult = (event) => {
     let transcript = '';
-    for (let i = event.resultIndex; i < event.results.length; i++) {
+    for (let i = event.resultIndex; i < event.results.length; i += 1) {
       if (event.results[i].isFinal) {
         transcript += event.results[i][0].transcript;
       }
     }
-    if (transcript) {
-      input.value = transcript;
-    }
+    if (transcript) input.value = transcript;
   };
-  
   rec.onend = () => {
     isListening = false;
     document.getElementById('voice-status').style.display = 'none';
   };
-  
   rec.onerror = (e) => {
     addMessage('Voice error: ' + e.error, 'error');
     isListening = false;
     document.getElementById('voice-status').style.display = 'none';
   };
-  
   return rec;
 }
 
@@ -568,7 +633,6 @@ function toggleVoice() {
     recognition = initVoice();
     if (!recognition) return;
   }
-  
   if (isListening) {
     recognition.stop();
     isListening = false;
@@ -580,19 +644,17 @@ function toggleVoice() {
   }
 }
 
-// ========== EMOJI PICKER ==========
-const emojis = ['😀', '😂', '😊', '😍', '🤔', '😎', '😭', '😡', '👍', '👎', '❤️', '🎉', '🔥', '💯', '✨', '👏', '🙌', '💪', '🤝', '🙏', '👋', '🚗', '🐕', '🍕', '🍔', '🍟', '🌮', '🍺', '☕', '⚽', '🏀', '🎮', '🎵', '📱', '💻', '🔧', '🚀', '⭐', '🌙', '☀️', '🌈', '💧', '❄️', '🔥', '💰', '🏆', '🎯', '📚', '💡', '🔒', '🌐'];
+const emojis = ['😀','😂','😊','😍','🤔','😎','😭','😡','👍','👎','❤️','🎉','🔥','💯','✨','👏','🙌','💪','🤝','🙏','👋','🚗','🐕','🍕','🍔','🍟','🌮','🍺','☕','⚽','🏀','🎮','🎵','📱','💻','🔧','🚀','⭐','🌙','☀️','🌈','💧','❄️','🔥','💰','🏆','🎯','📚','💡','🔒','🌐'];
 
 function toggleEmojiPicker() {
   const picker = document.getElementById('emoji-picker');
-  const isVisible = picker.style.display !== 'none';
-  
-  if (isVisible) {
+  const visible = picker.style.display !== 'none';
+  if (visible) {
     picker.style.display = 'none';
-  } else {
-    picker.innerHTML = emojis.map(e => `<span onclick="insertEmoji('${e}')">${e}</span>`).join('');
-    picker.style.display = 'grid';
+    return;
   }
+  picker.innerHTML = emojis.map((e) => `<span onclick="insertEmoji('${e}')">${e}</span>`).join('');
+  picker.style.display = 'grid';
 }
 
 function insertEmoji(emoji) {
@@ -600,12 +662,3 @@ function insertEmoji(emoji) {
   input.focus();
   document.getElementById('emoji-picker').style.display = 'none';
 }
-
-// ========== KEYBOARD SHORTCUTS ==========
-document.addEventListener('keydown', (e) => {
-  // Ctrl+M: Voice
-  if (e.ctrlKey && e.key === 'm') {
-    e.preventDefault();
-    toggleVoice();
-  }
-});

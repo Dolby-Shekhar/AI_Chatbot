@@ -5,23 +5,34 @@
   "main": "server.js",
   "scripts": {
     "start": "node server.js",
-    "dev": "nodemon server.js"
+    "dev": "nodemon server.js",
+    "lint": "eslint . --ext .js",
+    "lint:fix": "eslint --fix . --ext .js",
+    "format": "prettier --write .",
+    "test": "jest"
   },
   "dependencies": {
-    "axios": "^1.7.2",
+    "axios": "^1.16.1",
+    "bcryptjs": "^3.0.3",
     "compression": "^1.8.1",
     "cors": "^2.8.6",
-    "dompurify": "^3.0.8",
-    "dotenv": "^16.4.5",
-    "express": "^4.19.2",
-    "express-rate-limit": "^7.1.5",
-    "helmet": "^7.1.0",
-    "lowdb": "^7.0.1",
-    "multer": "^1.4.5-lts.1",
-    "uuid": "^14.0.0",
-    "ws": "^8.18.0"
+    "dompurify": "^3.4.5",
+    "dotenv": "^17.4.2",
+    "express": "^4.22.2",
+    "express-rate-limit": "^8.5.2",
+    "helmet": "^8.1.0",
+    "jsonwebtoken": "^9.0.0",
+    "multer": "^1.4.5-lts.2",
+    "ws": "^8.20.1"
   },
-"devDependencies": {
-    "nodemon": "^3.1.4"
+  "devDependencies": {
+    "jest": "^29.7.0",
+    "nodemon": "^3.1.4",
+    "prettier": "^3.8.3",
+    "supertest": "^6.3.3",
+    "eslint": "^8.57.1"
+  },
+  "optionalDependencies": {
+    "better-sqlite3": "^8.7.0"
   }
 }

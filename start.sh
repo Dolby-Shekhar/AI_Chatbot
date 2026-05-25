@@ -1,8 +1,10 @@
 #!/bin/bash
 
-# Initialize fresh database (clears old shared chats)
-echo '{"sessions": {}, "activeSession": null, "summary": null}' > db.json
-echo "Database initialized"
+mkdir -p data
+if [ ! -f data/db.json ]; then
+  echo '{"users": {}, "summary": null}' > data/db.json
+  echo "Database initialized"
+fi
 
 # Start the application
 exec node server.js

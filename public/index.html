@@ -98,6 +98,49 @@
       gap: 8px;
     }
 
+    .auth-panel {
+      display: flex;
+      gap: 12px;
+      flex-wrap: wrap;
+      justify-content: space-between;
+      align-items: center;
+      padding: 16px 20px;
+      background: rgba(26, 26, 46, 0.75);
+      border-radius: var(--radius-lg);
+      border: 1px solid var(--border);
+      box-shadow: var(--shadow);
+      margin-top: 12px;
+    }
+
+    .auth-status {
+      color: var(--text-secondary);
+      font-size: 0.95rem;
+      width: 100%;
+      max-width: 480px;
+    }
+
+    .auth-form {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      width: 100%;
+      max-width: 520px;
+    }
+
+    .auth-form input {
+      flex: 1;
+      min-width: 140px;
+      padding: 12px 14px;
+      border: 1px solid var(--border);
+      border-radius: var(--radius-md);
+      background: var(--bg-tertiary);
+      color: var(--text-primary);
+    }
+
+    .auth-form button {
+      min-width: 100px;
+    }
+
     /* Connection Status */
     .status {
       font-size: 0.75rem;
@@ -469,7 +512,17 @@
       </div>
     </header>
 
-<!-- Sessions bar hidden for privacy - each user has private session only -->
+    <div class="auth-panel">
+      <div class="auth-status" id="auth-status">Anonymous mode</div>
+      <form class="auth-form" id="auth-form" onsubmit="event.preventDefault(); loginUser();">
+        <input id="auth-username" placeholder="Username" autocomplete="username">
+        <input id="auth-password" type="password" placeholder="Password" autocomplete="current-password">
+        <button type="button" class="btn-secondary" onclick="registerUser()">Register</button>
+        <button type="button" class="btn-secondary" onclick="loginUser()">Login</button>
+      </form>
+      <button class="btn-secondary" id="logout-btn" style="display:none;" onclick="logoutUser()">Logout</button>
+    </div>
+
     <div class="sessions-bar" id="sessions" style="display:none;"></div>
 
     <div class="tools">
@@ -501,6 +554,7 @@
     </div>
   </div>
 
+  <script src="https://cdn.jsdelivr.net/npm/dompurify@2.4.0/dist/purify.min.js"></script>
   <script src="/chat.js"></script>
 </body>
 </html>
